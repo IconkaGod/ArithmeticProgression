@@ -100,9 +100,9 @@ func (s *service) Delete(id int) error {
 func (s *service) ListTasks() ([]models.Task, error) {
 	models := s.repo.List()
 
-	for _, v := range models {
+	for i, v := range models {
 		if v.Status == "in queue" {
-			v.NumInQueue = s.queue.GetPos(v.Id)
+			models[i].NumInQueue = s.queue.GetPos(v.Id)
 		}
 	}
 

@@ -36,8 +36,19 @@ func (h *handlers) SetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.srv.SetTask(req)
+	err = h.srv.SetTask(req)
+	if err != nil {
+		render.Status(r, http.StatusInternalServerError)
+		render.JSON(w, r, models.Response{
+			Status: "error",
+			Error:  "Failed to get tasks",
+		})
+	}
 
+	render.Status(r, http.StatusCreated)
+	render.JSON(w, r, models.Response{
+		Status: "ok",
+	})
 }
 
 func (h *handlers) ListTasks(w http.ResponseWriter, r *http.Request) {
