@@ -4,17 +4,19 @@ import (
 	"context"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/IconkaGod/ArithmeticProgression/internal/api/handlers"
+	"github.com/IconkaGod/ArithmeticProgression/internal/cache"
 	"github.com/IconkaGod/ArithmeticProgression/internal/queue"
-	"github.com/IconkaGod/ArithmeticProgression/internal/repository"
 	"github.com/IconkaGod/ArithmeticProgression/internal/router"
 	"github.com/IconkaGod/ArithmeticProgression/internal/service"
-	workers "github.com/IconkaGod/ArithmeticProgression/internal/workerPool"
+	pool "github.com/IconkaGod/ArithmeticProgression/internal/workerPool"
 )
 
 func main() {
@@ -28,21 +30,23 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	repo := repository.NewRepository(ctx)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	q := queue.NewQueue()
+	cache := cache.NewCache(ctx, logger, 2*time.Second)
 
-	srv := service.NewService(q, repo)
+	q := queue.NewQueue(logger)
 
-	hand := handlers.NewHandlers(srv)
+	srv := service.NewService(q, cache, logger)
 
-	pool := workers.NewWorkerPool(ctx, workersCount, q, srv)
+	hand := handlers.NewHandlers(srv, logger)
+
+	pool := pool.NewWorkerPool(ctx, workersCount, q, srv, logger)
 	pool.StartWorkers()
 
 	r := router.NewRouter(hand)
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	log.Println("Starting server")
 
@@ -52,7 +56,7 @@ func main() {
 		}
 	}()
 
-	<-stop
+	<-sigs
 
 	log.Println("Shutting down service...")
 	cancel()
