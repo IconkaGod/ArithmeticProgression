@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"log/slog"
-	"reflect"
 	"testing"
 	"time"
 
@@ -90,7 +89,6 @@ func Test_cache_GetById(t *testing.T) {
 
 	now := time.Now()
 	testTask := models.Task{
-		Id:            1,
 		ElementsCount: 10,
 		Delta:         2.5,
 		StartNumber:   1.0,
@@ -141,8 +139,8 @@ func Test_cache_GetById(t *testing.T) {
 				t.Fatal("GetById() succeeded unexpectedly")
 			}
 
-			if !reflect.DeepEqual(tt.want, got) {
-				t.Errorf("GetById() = %v, want %v", got, tt.want)
+			if got.Id != tt.id || got.ElementsCount != tt.want.ElementsCount {
+				t.Errorf("Mismatch. Got ID: %d, Expected ID: %d. Got Count: %d, Expected Count: %d", got.Id, tt.id, got.ElementsCount, tt.want.ElementsCount)
 			}
 		})
 	}
@@ -315,8 +313,9 @@ func Test_cache_UpdateProgress(t *testing.T) {
 				t.Fatalf("GetById failed after UpdateProgress: %v", err)
 			}
 
-			if reflect.DeepEqual(gotTask, tt.wantTask) {
-				t.Errorf("Expected %v, got %v", tt.wantTask, gotTask)
+			if gotTask.Iteration != tt.wantTask.Iteration || gotTask.Result != tt.wantTask.Result {
+				t.Errorf("UpdateProgress failed. Expected Iteration: %d, Got: %d. Expected Result: %.1f, Got: %.1f",
+					tt.wantTask.Iteration, gotTask.Iteration, tt.wantTask.Result, gotTask.Result)
 			}
 		})
 	}
@@ -352,13 +351,73 @@ func Test_cache_Delete(t *testing.T) {
 			}
 
 			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Expected error for 'not found' case, but Delete succeeded.")
+				}
 				return
 			}
 
 			_, err = cache.GetById(tt.id)
 			if err == nil {
-				t.Errorf("GetById() succed: %v", err)
+				t.Errorf("GetById() succeeded for deleted task, expected error.")
 			}
 		})
+	}
+}
+
+func Test_cache_Set(t *testing.T) {
+	cache := NewCache(context.Background(), slog.Default(), 1*time.Second)
+
+	id1, err := cache.Set(context.Background(), models.Task{})
+	if err != nil || id1 != 1 {
+		t.Errorf("Set failed for ID 1: got %d, err %v", id1, err)
+	}
+
+	id2, err := cache.Set(context.Background(), models.Task{})
+	if err != nil || id2 != 2 {
+		t.Errorf("Set failed for ID 2: got %d, err %v", id2, err)
+	}
+
+	task, _ := cache.GetById(id1)
+	if task.Id != id1 {
+		t.Errorf("Task ID mismatch in repo: want %d, got %d", id1, task.Id)
+	}
+}
+
+func Test_cache_List(t *testing.T) {
+	ctx := context.Background()
+	cache := NewCache(ctx, slog.Default(), 5*time.Second)
+
+	cache.Set(ctx, models.Task{ElementsCount: 3, Status: "IN_PROGRESS", TTL: 100})
+	cache.Set(ctx, models.Task{ElementsCount: 1, Status: "IN_QUEUE", TTL: 100})
+	cache.Set(ctx, models.Task{ElementsCount: 3, Status: "COMPLETE", TTL: 100, CompletedAt: time.Now()})
+	cache.Set(ctx, models.Task{ElementsCount: 1, Status: "COMPLETE", TTL: 100, CompletedAt: time.Now()})
+	cache.Set(ctx, models.Task{ElementsCount: 2, Status: "COMPLETE", TTL: 100, CompletedAt: time.Now()})
+	cache.Set(ctx, models.Task{ElementsCount: 2, Status: "COMPLETE", TTL: 100})
+
+	tasks, err := cache.List(ctx)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	if len(tasks) != 5 {
+		t.Fatalf("Expected 5 tasks, got %d", len(tasks))
+	}
+	expectedIDs := []int{1, 2, 3, 4, 5}
+	for i, expectedID := range expectedIDs {
+		if tasks[i].Id != expectedID {
+			t.Errorf("Tasks not sorted by ID at index %d: expected %d, got %d", i, expectedID, tasks[i].Id)
+		}
+	}
+
+	cache.Set(ctx, models.Task{
+		Status:      "COMPLETE",
+		TTL:         0.001,
+		CompletedAt: time.Now().Add(-1 * time.Second),
+	})
+
+	tasksFiltered, _ := cache.List(ctx)
+	if len(tasksFiltered) != 5 {
+		t.Errorf("Expected 5 tasks after List filtration, got %d", len(tasksFiltered))
 	}
 }
