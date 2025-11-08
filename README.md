@@ -13,6 +13,9 @@
 # Запуск сервиса
 - `go run main.go -workers 1`
 - `-workers` - флаг для запуска опредленного числа обработчиков.
+или
+- `go build -o service_name ./cmd/main.go`
+- `./service_name`
 # HTTP API
 ## Постановка задачи 
 ### Запрос
