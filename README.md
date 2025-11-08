@@ -12,11 +12,11 @@
 - testify - для тестирования и моков.
 # Запуск сервиса
 ## go run
-- `go run main.go -workers 1`
+- `go run main.go -workers 5`
 - `-workers` - флаг для запуска опредленного числа обработчиков.
 ## go build
 - `go build -o service_name ./cmd/main.go`
-- `./service_name`
+- `./service_name -workers 5`
 # HTTP API
 ## Постановка задачи 
 ### Запрос
