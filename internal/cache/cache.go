@@ -19,21 +19,20 @@ const (
 )
 
 type Cache interface {
-	Set(ctx context.Context, task models.Task) (int, error)
-	GetById(id int) (models.Task, error)
-	SetComplete(id int, completeAt time.Time) error
-	SetInQueue(id int, settingAt time.Time) error
-	SetInProgress(id int, startTime time.Time) error
-	setStatus(id int, time time.Time, status string) error
-	UpdateProgress(id int, iteration int, result float64) error
-	Delete(id int) error
+	Set(ctx context.Context, task models.Task) (int64, error)
+	GetById(id int64) (models.Task, error)
+	SetComplete(id int64, completeAt time.Time) error
+	SetInQueue(id int64, settingAt time.Time) error
+	SetInProgress(id int64, startTime time.Time) error
+	UpdateProgress(id int64, iteration int, result float64) error
+	Delete(id int64) error
 	List(ctx context.Context) ([]models.Task, error)
 }
 
 type cache struct {
-	id   int
+	id   int64
 	mu   sync.RWMutex
-	repo map[int]models.Task
+	repo map[int64]models.Task
 	log  *slog.Logger
 }
 
@@ -41,12 +40,40 @@ func NewCache(ctx context.Context, l *slog.Logger, cleanupTick time.Duration) Ca
 	c := &cache{
 		id:   1,
 		mu:   sync.RWMutex{},
-		repo: make(map[int]models.Task),
+		repo: make(map[int64]models.Task),
 		log:  l,
 	}
 
 	go c.ttlCleanup(ctx, cleanupTick)
 	return c
+}
+
+func (c *cache) CleanUp() {
+	toDelete := make([]int64, 0)
+
+	c.mu.RLock()
+	for k, v := range c.repo {
+		if v.Status == StatusComplete {
+			ttlDuration := time.Duration(v.TTL * float64(time.Second))
+			if time.Now().After(v.CompletedAt.Add(ttlDuration)) {
+				toDelete = append(toDelete, k)
+			}
+		}
+	}
+	c.mu.RUnlock()
+
+	if len(toDelete) > 0 {
+		c.log.Info(
+			"cleaning up expired tasks",
+			slog.String("operation", "cache.cleanUp()"),
+			slog.Int("tasks_deleted", len(toDelete)),
+		)
+		c.mu.Lock()
+		for _, id := range toDelete {
+			delete(c.repo, id)
+		}
+		c.mu.Unlock()
+	}
 }
 
 func (c *cache) ttlCleanup(ctx context.Context, cleanupTick time.Duration) {
@@ -56,40 +83,14 @@ func (c *cache) ttlCleanup(ctx context.Context, cleanupTick time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			toDelete := make([]int, 0)
-
-			c.mu.RLock()
-			for k, v := range c.repo {
-				if v.Status == StatusComplete {
-					ttlDuration := time.Duration(v.TTL * float64(time.Second))
-					if time.Now().After(v.CompletedAt.Add(ttlDuration)) {
-						toDelete = append(toDelete, k)
-					}
-				}
-			}
-			c.mu.RUnlock()
-
-			if len(toDelete) > 0 {
-				c.log.Info(
-					"cleaning up expired tasks",
-					slog.String("operation", "cache.ttlCleanup"),
-					slog.Int("tasks_deleted", len(toDelete)),
-				)
-
-				for _, id := range toDelete {
-					c.mu.Lock()
-					delete(c.repo, id)
-					c.mu.Unlock()
-				}
-			}
-
+			c.CleanUp()
 		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (c *cache) Set(ctx context.Context, task models.Task) (int, error) {
+func (c *cache) Set(ctx context.Context, task models.Task) (int64, error) {
 	log := c.log.With(
 		slog.String("operation", "cache.Set"),
 		slog.Any("request_id", middleware.GetReqID(ctx)),
@@ -98,24 +99,26 @@ func (c *cache) Set(ctx context.Context, task models.Task) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	task.Id = c.id
-	c.repo[c.id] = task
-
-	log = log.With(
-		slog.Int("task_id", task.Id),
-	)
-
 	id := c.id
+	task.Id = id
+	c.repo[id] = task
 	c.id++
 
-	log.Debug("task saved in cache")
+	log = log.With(
+		slog.Int64("task_id", task.Id),
+	)
+
+	log.Debug(
+		"task saved in cache",
+	)
+
 	return id, nil
 }
 
-func (c *cache) GetById(id int) (models.Task, error) {
+func (c *cache) GetById(id int64) (models.Task, error) {
 	log := c.log.With(
 		slog.String("operation", "cache.GetById"),
-		slog.Int("task_id", id),
+		slog.Int64("task_id", id),
 	)
 
 	c.mu.RLock()
@@ -133,10 +136,10 @@ func (c *cache) GetById(id int) (models.Task, error) {
 	return task, nil
 }
 
-func (c *cache) setStatus(id int, time time.Time, status string) error {
+func (c *cache) setStatus(id int64, time time.Time, status string) error {
 	log := c.log.With(
 		slog.String("operation", "cache.setStatus"),
-		slog.Int("task_id", id),
+		slog.Int64("task_id", id),
 	)
 
 	c.mu.Lock()
@@ -171,22 +174,22 @@ func (c *cache) setStatus(id int, time time.Time, status string) error {
 	return nil
 }
 
-func (c *cache) SetComplete(id int, completeAt time.Time) error {
+func (c *cache) SetComplete(id int64, completeAt time.Time) error {
 	return c.setStatus(id, completeAt, StatusComplete)
 }
 
-func (c *cache) SetInProgress(id int, startAt time.Time) error {
+func (c *cache) SetInProgress(id int64, startAt time.Time) error {
 	return c.setStatus(id, startAt, StatusInProgress)
 }
 
-func (c *cache) SetInQueue(id int, settingAt time.Time) error {
+func (c *cache) SetInQueue(id int64, settingAt time.Time) error {
 	return c.setStatus(id, settingAt, StatusInQueue)
 }
 
-func (c *cache) UpdateProgress(id int, iteration int, result float64) error {
+func (c *cache) UpdateProgress(id int64, iteration int, result float64) error {
 	log := c.log.With(
 		slog.String("operation", "cache.UpdateProgress"),
-		slog.Int("task_id", id),
+		slog.Int64("task_id", id),
 		slog.Int("iteration", iteration),
 		slog.Float64("result", result),
 	)
@@ -214,10 +217,10 @@ func (c *cache) UpdateProgress(id int, iteration int, result float64) error {
 	return nil
 }
 
-func (c *cache) Delete(id int) error {
+func (c *cache) Delete(id int64) error {
 	log := c.log.With(
 		slog.String("operation", "cache.Delete"),
-		slog.Int("task_id", id),
+		slog.Int64("task_id", id),
 	)
 	c.mu.Lock()
 	defer c.mu.Unlock()

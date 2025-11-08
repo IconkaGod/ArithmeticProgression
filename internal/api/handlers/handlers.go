@@ -52,6 +52,21 @@ func (h *handlers) SetTask(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	defer r.Body.Close()
+
+	if req.Interval < 0 || req.ElementsCount < 0 {
+		log.Warn(
+			"validation error",
+			slog.Int("status", http.StatusBadRequest),
+		)
+
+		render.Status(r, http.StatusBadRequest)
+		render.JSON(w, r, models.Response{
+			Status: "error",
+			Error:  "Validation error",
+		})
+		return
+	}
 
 	err = h.srv.SetTask(ctx, req)
 	if err != nil {
@@ -64,8 +79,10 @@ func (h *handlers) SetTask(w http.ResponseWriter, r *http.Request) {
 		render.Status(r, http.StatusInternalServerError)
 		render.JSON(w, r, models.Response{
 			Status: "error",
-			Error:  "Failed to get tasks",
+			Error:  "Failed to set task",
 		})
+
+		return
 	}
 
 	log.Info(
@@ -104,7 +121,7 @@ func (h *handlers) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 	log.Info(
 		"task listed",
-		slog.Int("status", http.StatusCreated),
+		slog.Int("status", http.StatusOK),
 	)
 
 	render.Status(r, http.StatusOK)

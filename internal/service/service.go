@@ -15,11 +15,11 @@ import (
 
 type Service interface {
 	SetTask(ctx context.Context, task models.CreateTaskModel) error
-	GetTaskById(id int) (models.Task, error)
-	SetInProgress(id int, startTime time.Time) error
-	SetComplete(id int, completeAt time.Time) error
-	UpdateProgress(id int, iteration int, result float64) error
-	Delete(d int) error
+	GetTaskById(id int64) (models.Task, error)
+	SetInProgress(id int64, startTime time.Time) error
+	SetComplete(id int64, completeAt time.Time) error
+	UpdateProgress(id int64, iteration int, result float64) error
+	Delete(d int64) error
 	ListTasks(ctx context.Context) ([]models.Task, error)
 }
 
@@ -70,7 +70,7 @@ func (s *service) SetTask(ctx context.Context, task models.CreateTaskModel) erro
 	}
 
 	log = log.With(
-		slog.Int("task_id", id),
+		slog.Int64("task_id", id),
 	)
 
 	log.Info(
@@ -89,6 +89,7 @@ func (s *service) SetTask(ctx context.Context, task models.CreateTaskModel) erro
 	}
 
 	s.queue.Push(id)
+
 	log.Info(
 		"task status changed to IN_QUEUE",
 	)
@@ -96,10 +97,10 @@ func (s *service) SetTask(ctx context.Context, task models.CreateTaskModel) erro
 	return nil
 }
 
-func (s *service) GetTaskById(id int) (models.Task, error) {
+func (s *service) GetTaskById(id int64) (models.Task, error) {
 	log := s.log.With(
-		"operation", "service.GetTaskById",
-		"task_id", id,
+		slog.String("operation", "service.GetTaskById"),
+		slog.Int64("task_id", id),
 	)
 
 	task, err := s.cache.GetById(id)
@@ -129,10 +130,10 @@ func (s *service) GetTaskById(id int) (models.Task, error) {
 	return task, nil
 }
 
-func (s *service) SetInProgress(id int, startTime time.Time) error {
+func (s *service) SetInProgress(id int64, startTime time.Time) error {
 	log := s.log.With(
-		"operation", "service.SetInProgress",
-		"task_id", id,
+		slog.String("operation", "service.SetInProgress"),
+		slog.Int64("task_id", id),
 	)
 
 	err := s.cache.SetInProgress(id, startTime)
@@ -151,10 +152,10 @@ func (s *service) SetInProgress(id int, startTime time.Time) error {
 	return nil
 }
 
-func (s *service) SetComplete(id int, completeAt time.Time) error {
+func (s *service) SetComplete(id int64, completeAt time.Time) error {
 	log := s.log.With(
-		"operation", "service.SetComplete",
-		"task_id", id,
+		slog.String("operation", "service.SetComplete"),
+		slog.Int64("task_id", id),
 	)
 
 	err := s.cache.SetComplete(id, completeAt)
@@ -173,10 +174,10 @@ func (s *service) SetComplete(id int, completeAt time.Time) error {
 	return nil
 }
 
-func (s *service) UpdateProgress(id int, iteration int, result float64) error {
+func (s *service) UpdateProgress(id int64, iteration int, result float64) error {
 	log := s.log.With(
-		"operation", "service.UpdateProgress",
-		"task_id", id,
+		slog.String("operation", "service.UpdateProgress"),
+		slog.Int64("task_id", id),
 	)
 
 	err := s.cache.UpdateProgress(id, iteration, result)
@@ -197,10 +198,10 @@ func (s *service) UpdateProgress(id int, iteration int, result float64) error {
 	return nil
 }
 
-func (s *service) Delete(id int) error {
+func (s *service) Delete(id int64) error {
 	log := s.log.With(
-		"operation", "service.Delete",
-		"task_id", id,
+		slog.String("operation", "service.Delete"),
+		slog.Int64("task_id", id),
 	)
 
 	err := s.cache.Delete(id)
@@ -235,7 +236,7 @@ func (s *service) ListTasks(ctx context.Context) ([]models.Task, error) {
 	}
 
 	for i, v := range models {
-		if v.Status == "in queue" {
+		if v.Status == "IN_QUEUE" {
 			models[i].NumInQueue = s.queue.GetPos(v.Id)
 		}
 	}
