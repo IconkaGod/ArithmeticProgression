@@ -51,7 +51,15 @@ func main() {
 	log.Println("Starting server")
 
 	go func() {
-		if err := http.ListenAndServe(":8080", r); err != nil {
+		server := &http.Server{
+			Addr:         ":8080",
+			Handler:      r,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 20 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		}
+
+		if err := server.ListenAndServe(); err != nil {
 			log.Fatalf("failed to start server:%v", err)
 		}
 	}()

@@ -9,6 +9,8 @@ import (
 	"github.com/IconkaGod/ArithmeticProgression/internal"
 	"github.com/IconkaGod/ArithmeticProgression/internal/queue"
 	"github.com/IconkaGod/ArithmeticProgression/internal/service"
+
+	"github.com/shopspring/decimal"
 )
 
 type Pool interface {
@@ -38,8 +40,8 @@ func (p *pool) StartWorkers() {
 		slog.String("operation", "pool.StartWorkers"),
 	)
 
-	for i := 0; i < p.workersCount; i++ {
-		go p.processTask(i + 1)
+	for i := 1; i <= p.workersCount; i++ {
+		go p.processTask(i)
 	}
 
 	log.Info(
@@ -71,27 +73,31 @@ func (p *pool) processTask(workerId int) {
 					log.Debug(
 						"queue is empty, retrying",
 					)
-
-					time.Sleep(10 * time.Millisecond)
 				} else {
 					log.Error(
 						"queue pop failed",
 						slog.Any("error", err),
 					)
+					return
 				}
 				continue
 			}
 
 			log = log.With(
-				slog.Int("task_id", taskId),
+				slog.Int64("task_id", taskId),
 			)
 
 			task, err := p.srv.GetTaskById(taskId)
 			if err != nil {
 				if errors.Is(err, internal.ErrNotFound) {
-					log.Warn("task ID found in queue but not in cache")
+					log.Warn(
+						"task ID found in queue but not in cache",
+					)
 				} else {
-					log.Error("failed to fetch task details from service", slog.Any("error", err))
+					log.Error(
+						"failed to fetch task details from service",
+						slog.Any("error", err),
+					)
 				}
 				continue
 			}
@@ -102,14 +108,15 @@ func (p *pool) processTask(workerId int) {
 					slog.String("reason", "elements_count is zero"),
 				)
 
-				p.srv.SetComplete(taskId, time.Now())
+				err := p.srv.SetComplete(taskId, time.Now())
+				if err != nil {
+					log.Error(
+						"failed to set task status to COMPLETE",
+						slog.Any("error", err),
+					)
+				}
 				continue
 			}
-
-			interval := time.Duration(task.Interval * float64(time.Second))
-			ticker := time.NewTicker(interval)
-
-			task.Result = task.StartNumber
 
 			startTime := time.Now()
 
@@ -130,13 +137,21 @@ func (p *pool) processTask(workerId int) {
 				"start of processing",
 			)
 
-			for i := 0; i < task.ElementsCount; i++ {
+			task.Result = task.StartNumber
+
+			interval := time.Duration(task.Interval * float64(time.Second))
+			ticker := time.NewTicker(interval)
+
+			for i := 1; i < task.ElementsCount; i++ {
 				select {
 				case <-ticker.C:
-					task.Result += task.Delta
-					task.Iteration++
+					tempRes := decimal.NewFromFloat(task.Result)
+					tempDelta := decimal.NewFromFloat(task.Delta)
+					tempRes = tempRes.Add(tempDelta)
 
-					err = p.srv.UpdateProgress(task.Id, task.Iteration, task.Result)
+					task.Result = tempRes.InexactFloat64()
+
+					err = p.srv.UpdateProgress(task.Id, i, task.Result)
 					if err != nil {
 						log.Warn(
 							"failed to update progress task",

@@ -8,31 +8,31 @@ import (
 )
 
 type Queue interface {
-	Push(id int)
-	Pop() (int, error)
-	GetPos(id int) int
+	Push(id int64)
+	Pop() (int64, error)
+	GetPos(id int64) int
 }
 
 type queue struct {
 	mu   sync.RWMutex
-	buff []int
+	buff []int64
 	log  *slog.Logger
 }
 
 func NewQueue(l *slog.Logger) Queue {
 	return &queue{
-		buff: make([]int, 0),
+		buff: make([]int64, 0),
 		log:  l,
 	}
 }
 
-func (q *queue) Push(id int) {
+func (q *queue) Push(id int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	log := q.log.With(
 		slog.String("operation", "queue.Push"),
-		slog.Int("task_id", id),
+		slog.Int64("task_id", id),
 	)
 
 	q.buff = append(q.buff, id)
@@ -44,7 +44,7 @@ func (q *queue) Push(id int) {
 	)
 }
 
-func (q *queue) Pop() (int, error) {
+func (q *queue) Pop() (int64, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -61,27 +61,27 @@ func (q *queue) Pop() (int, error) {
 
 	log.Debug(
 		"task id pop from queue",
-		slog.Int("task_id", id),
+		slog.Int64("task_id", id),
 		slog.Int("queue_length", len(q.buff)),
 		slog.Int("queue_cap", cap(q.buff)),
 	)
 	return id, nil
 }
 
-func (q *queue) GetPos(id int) int {
+func (q *queue) GetPos(id int64) int {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
 	log := q.log.With(
 		slog.String("operation", "queue.GetPos"),
-		slog.Int("task_id", id),
+		slog.Int64("task_id", id),
 	)
 
 	for i, v := range q.buff {
 		if v == id {
 			log.Info(
 				"task id fetching in queue",
-				slog.Int("task_id", id),
+				slog.Int64("task_id", id),
 			)
 			return i + 1
 		}
@@ -89,7 +89,6 @@ func (q *queue) GetPos(id int) int {
 
 	log.Warn(
 		"task id not fetching in queue",
-		slog.Int("task_id", id),
 	)
 
 	return -1

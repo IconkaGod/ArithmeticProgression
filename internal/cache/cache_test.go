@@ -4,83 +4,43 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/IconkaGod/ArithmeticProgression/internal/models"
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_cache_ttlCleanup(t *testing.T) {
-	ctx := context.Background()
+	synctest.Test(t, func(t *testing.T) {
+		c := NewCache(t.Context(), slog.Default(), 12*time.Second)
 
-	tests := []struct {
-		name       string
-		setupCache func() Cache
-		wantCount  int
-		waitTime   time.Duration
-	}{
-		{
-			name: "should delete expired complete task",
-			setupCache: func() Cache {
-				cache := NewCache(context.Background(), slog.Default(), 1*time.Millisecond)
-				cache.Set(ctx, models.Task{
-					Id:          1,
-					TTL:         0.001,
-					Status:      "COMPLETE",
-					CompletedAt: time.Now(),
-				})
-				return cache
-			},
-			wantCount: 0,
-			waitTime:  50 * time.Millisecond,
-		},
-		{
-			name: "should not delete non-expired task",
-			setupCache: func() Cache {
-				cache := NewCache(context.Background(), slog.Default(), 1*time.Millisecond)
-				cache.Set(ctx, models.Task{
-					Id:          2,
-					TTL:         1000,
-					Status:      "COMPLETE",
-					CompletedAt: time.Now(),
-				})
-				return cache
-			},
-			wantCount: 1,
-			waitTime:  50 * time.Millisecond,
-		},
-		{
-			name: "should not delete in-progress task even if TTL expired",
-			setupCache: func() Cache {
-				cache := NewCache(context.Background(), slog.Default(), 1*time.Millisecond)
-				cache.Set(ctx, models.Task{
-					Id:          3,
-					TTL:         0.001,
-					Status:      "IN_PROGRESS",
-					CompletedAt: time.Now(),
-				})
-				return cache
-			},
-			wantCount: 1,
-			waitTime:  50 * time.Millisecond,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cache := tt.setupCache()
-
-			time.Sleep(tt.waitTime)
-
-			tasks, err := cache.List(ctx)
-			if err != nil {
-				t.Fatalf("List failed: %v", err)
-			}
-
-			if len(tasks) != tt.wantCount {
-				t.Errorf("Expected %d tasks, got %d", tt.wantCount, len(tasks))
-			}
+		c.Set(t.Context(), models.Task{
+			TTL:         0.001,
+			Status:      "COMPLETE",
+			CompletedAt: time.Now().Add(-1 * time.Second),
 		})
-	}
+
+		c.Set(t.Context(), models.Task{
+			TTL:         1000,
+			Status:      "COMPLETE",
+			CompletedAt: time.Now(),
+		})
+
+		c.Set(t.Context(), models.Task{
+			TTL:       0.001,
+			Status:    "IN_PROGRESS",
+			StartedAt: time.Now(),
+		})
+
+		c.(*cache).CleanUp()
+		synctest.Wait()
+
+		tasks, err := c.List(t.Context())
+		assert.NoError(t, err, "List shouldn't fail after cleanup")
+
+		assert.Len(t, tasks, 2, "Expected 2 tasks to remain after cleanup")
+	})
 }
 
 func Test_cache_GetById(t *testing.T) {
@@ -89,6 +49,7 @@ func Test_cache_GetById(t *testing.T) {
 
 	now := time.Now()
 	testTask := models.Task{
+		Id:            1,
 		ElementsCount: 10,
 		Delta:         2.5,
 		StartNumber:   1.0,
@@ -109,7 +70,7 @@ func Test_cache_GetById(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		id      int
+		id      int64
 		want    models.Task
 		wantErr bool
 	}{
@@ -129,33 +90,28 @@ func Test_cache_GetById(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, gotErr := cache.GetById(tt.id)
-			if gotErr != nil {
-				if !tt.wantErr {
-					t.Errorf("GetById() failed: %v", gotErr)
-				}
+
+			if tt.wantErr {
+				assert.Error(t, gotErr, "Expected error for not found task")
 				return
 			}
-			if tt.wantErr {
-				t.Fatal("GetById() succeeded unexpectedly")
-			}
 
-			if got.Id != tt.id || got.ElementsCount != tt.want.ElementsCount {
-				t.Errorf("Mismatch. Got ID: %d, Expected ID: %d. Got Count: %d, Expected Count: %d", got.Id, tt.id, got.ElementsCount, tt.want.ElementsCount)
-			}
+			assert.NoError(t, gotErr, "Should not get error for existing task")
+			assert.EqualValues(t, tt.want, got, "Task mismatch")
 		})
 	}
 }
 
 func Test_cache_setStatus(t *testing.T) {
 	cache := NewCache(context.Background(), slog.Default(), 1*time.Second)
-	cache.Set(context.Background(), models.Task{})
+	taskID, _ := cache.Set(context.Background(), models.Task{})
 
 	inQueueTime := time.Now()
 	inProgressTime := time.Now()
 	completeTime := time.Now()
 	tests := []struct {
 		name       string
-		id         int
+		id         int64
 		time       time.Time
 		status     string
 		wantErr    bool
@@ -163,7 +119,7 @@ func Test_cache_setStatus(t *testing.T) {
 	}{
 		{
 			name:       "set IN_QUEUE status",
-			id:         1,
+			id:         taskID,
 			time:       inQueueTime,
 			status:     "IN_QUEUE",
 			wantErr:    false,
@@ -172,7 +128,7 @@ func Test_cache_setStatus(t *testing.T) {
 
 		{
 			name:       "set IN_PROGRESS status",
-			id:         1,
+			id:         taskID,
 			time:       inProgressTime,
 			status:     "IN_PROGRESS",
 			wantErr:    false,
@@ -181,7 +137,7 @@ func Test_cache_setStatus(t *testing.T) {
 
 		{
 			name:       "set COMPLETE status",
-			id:         1,
+			id:         taskID,
 			time:       completeTime,
 			status:     "COMPLETE",
 			wantErr:    false,
@@ -208,37 +164,25 @@ func Test_cache_setStatus(t *testing.T) {
 				gotErr = cache.SetComplete(tt.id, tt.time)
 			}
 
-			if (gotErr != nil) != tt.wantErr {
-				t.Errorf("setStatus() error = %v, wantErr %v", gotErr, tt.wantErr)
+			if tt.wantErr {
+				assert.Error(t, gotErr, "Expected error for 'not found' case")
 				return
 			}
 
-			if tt.wantErr {
-				return
-			}
+			assert.NoError(t, gotErr, "Error setting status")
 
 			model, err := cache.GetById(tt.id)
-			if err != nil {
-				t.Fatalf("GetById error: %v", err)
-			}
 
-			if model.Status != tt.status {
-				t.Errorf("GetById().Status = %v, want %v", model.Status, tt.status)
-			}
+			assert.NoError(t, err, "GetById shouldn't fail after successful SetStatus")
+			assert.Equal(t, tt.status, model.Status, "Status mismatch")
 
 			switch tt.checkField {
 			case "SettingAt":
-				if !model.SettingAt.Equal(tt.time) {
-					t.Errorf("GetById().SettingAt = %v, want %v", model.SettingAt, tt.time)
-				}
+				assert.True(t, model.SettingAt.Equal(tt.time), "SettingAt mismatch")
 			case "StartedAt":
-				if !model.StartedAt.Equal(tt.time) {
-					t.Errorf("GetById().StartedAt = %v, want %v", model.StartedAt, tt.time)
-				}
+				assert.True(t, model.StartedAt.Equal(tt.time), "StartedAt mismatch")
 			case "CompletedAt":
-				if !model.CompletedAt.Equal(tt.time) {
-					t.Errorf("GetById().CompletedAt = %v, want %v", model.CompletedAt, tt.time)
-				}
+				assert.True(t, model.CompletedAt.Equal(tt.time), "CompletedAt mismatch")
 			}
 		})
 	}
@@ -260,7 +204,7 @@ func Test_cache_UpdateProgress(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		id        int
+		id        int64
 		iteration int
 		result    float64
 		wantErr   bool
@@ -297,26 +241,18 @@ func Test_cache_UpdateProgress(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := cache.UpdateProgress(tt.id, tt.iteration, tt.result)
 
-			if err != nil {
-				if !tt.wantErr {
-					t.Errorf("UpdateProgress() error = %v, wantErr %v", err, tt.wantErr)
-					return
-				}
-			}
-
 			if tt.wantErr {
+				assert.Error(t, err, "Expected error for 'not found' case")
 				return
 			}
 
-			gotTask, err := cache.GetById(tt.id)
-			if err != nil {
-				t.Fatalf("GetById failed after UpdateProgress: %v", err)
-			}
+			assert.NoError(t, err, "UpdateProgress failed unexpectedly")
 
-			if gotTask.Iteration != tt.wantTask.Iteration || gotTask.Result != tt.wantTask.Result {
-				t.Errorf("UpdateProgress failed. Expected Iteration: %d, Got: %d. Expected Result: %.1f, Got: %.1f",
-					tt.wantTask.Iteration, gotTask.Iteration, tt.wantTask.Result, gotTask.Result)
-			}
+			gotTask, err := cache.GetById(tt.id)
+
+			assert.NoError(t, err, "GetById failed after UpdateProgress")
+			assert.Equal(t, tt.wantTask.Iteration, gotTask.Iteration, "Iteration mismatch")
+			assert.InDelta(t, tt.wantTask.Result, gotTask.Result, 0.0001, "Result mismatch")
 		})
 	}
 }
@@ -327,7 +263,7 @@ func Test_cache_Delete(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		id      int
+		id      int64
 		wantErr bool
 	}{
 		{
@@ -344,23 +280,16 @@ func Test_cache_Delete(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := cache.Delete(tt.id)
-			if err != nil {
-				if !tt.wantErr {
-					t.Errorf("Delete() failed: %v", err)
-				}
-			}
 
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("Expected error for 'not found' case, but Delete succeeded.")
-				}
+				assert.Error(t, err, "Expected error for 'not found' case")
 				return
 			}
 
+			assert.NoError(t, err, "Delete failed unexpectedly")
+
 			_, err = cache.GetById(tt.id)
-			if err == nil {
-				t.Errorf("GetById() succeeded for deleted task, expected error.")
-			}
+			assert.Error(t, err, "GetById should fail for deleted task")
 		})
 	}
 }
@@ -369,19 +298,16 @@ func Test_cache_Set(t *testing.T) {
 	cache := NewCache(context.Background(), slog.Default(), 1*time.Second)
 
 	id1, err := cache.Set(context.Background(), models.Task{})
-	if err != nil || id1 != 1 {
-		t.Errorf("Set failed for ID 1: got %d, err %v", id1, err)
-	}
+	assert.NoError(t, err, "Set failed for ID 1")
+	assert.Equal(t, int64(1), id1, "ID 1 mismatch")
 
 	id2, err := cache.Set(context.Background(), models.Task{})
-	if err != nil || id2 != 2 {
-		t.Errorf("Set failed for ID 2: got %d, err %v", id2, err)
-	}
+	assert.NoError(t, err, "Set failed for ID 2")
+	assert.Equal(t, int64(2), id2, "ID 2 mismatch")
 
 	task, _ := cache.GetById(id1)
-	if task.Id != id1 {
-		t.Errorf("Task ID mismatch in repo: want %d, got %d", id1, task.Id)
-	}
+	assert.Equal(t, id1, task.Id, "Task ID mismatch in repo")
+	assert.Equal(t, models.Task{}.ElementsCount, task.ElementsCount, "ElementsCount should be 0")
 }
 
 func Test_cache_List(t *testing.T) {
@@ -396,18 +322,13 @@ func Test_cache_List(t *testing.T) {
 	cache.Set(ctx, models.Task{ElementsCount: 2, Status: "COMPLETE", TTL: 100})
 
 	tasks, err := cache.List(ctx)
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
 
-	if len(tasks) != 5 {
-		t.Fatalf("Expected 5 tasks, got %d", len(tasks))
-	}
-	expectedIDs := []int{1, 2, 3, 4, 5}
+	assert.NoError(t, err, "List failed unexpectedly")
+	assert.Len(t, tasks, 5, "Expected 5 tasks in the primary list (ID 6 filtered)")
+
+	expectedIDs := []int64{1, 2, 3, 4, 5}
 	for i, expectedID := range expectedIDs {
-		if tasks[i].Id != expectedID {
-			t.Errorf("Tasks not sorted by ID at index %d: expected %d, got %d", i, expectedID, tasks[i].Id)
-		}
+		assert.Equal(t, expectedID, tasks[i].Id, "Tasks not sorted by ID at index %d", i)
 	}
 
 	cache.Set(ctx, models.Task{
@@ -416,8 +337,7 @@ func Test_cache_List(t *testing.T) {
 		CompletedAt: time.Now().Add(-1 * time.Second),
 	})
 
-	tasksFiltered, _ := cache.List(ctx)
-	if len(tasksFiltered) != 5 {
-		t.Errorf("Expected 5 tasks after List filtration, got %d", len(tasksFiltered))
-	}
+	tasksFiltered, err := cache.List(ctx)
+	assert.NoError(t, err, "List failed on second call")
+	assert.Len(t, tasksFiltered, 5, "Expected 5 tasks after filtration, the new expired task should be excluded")
 }
