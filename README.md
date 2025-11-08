@@ -11,9 +11,10 @@
 - shopspring/decimal - для сохранения точности вычислений.
 - testify - для тестирования и моков.
 # Запуск сервиса
+## go run
 - `go run main.go -workers 1`
 - `-workers` - флаг для запуска опредленного числа обработчиков.
-или
+## go build
 - `go build -o service_name ./cmd/main.go`
 - `./service_name`
 # HTTP API
